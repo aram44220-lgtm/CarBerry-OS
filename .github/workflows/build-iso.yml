@@ -16,18 +16,29 @@ jobs:
       - name: Install Debian live-build tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y live-build debootstrap
+          sudo apt-get install -y live-build debootstrap xorriso squashfs-tools
 
-      - name: Configure Debian Live
+      - name: Configure Debian Live ISO
         run: |
           mkdir -p debian-live
           cd debian-live
-          # Настраиваем сборку Debian с графической оболочкой KDE
+          
+          # Настройка базовой конфигурации Debian Bookworm
           lb config \
+            --distribution bookworm \
             --debian-installer live \
             --archive-areas "main contrib non-free non-free-firmware" \
-            --desktop kde \
             --architectures amd64
+          
+          # Прописываем графическую среду KDE Plasma и необходимые утилиты
+          mkdir -p config/package-lists
+          cat << 'EOF' > config/package-lists/desktop.list.chroot
+          task-kde-desktop
+          plasma-desktop
+          sddm
+          network-manager
+          sudo
+          EOF
 
       - name: Build ISO
         run: |
