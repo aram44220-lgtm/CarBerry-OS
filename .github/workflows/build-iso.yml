@@ -1,4 +1,4 @@
-name: Build CarBerry OS (Debian)
+name: Build CarBerry OS (Ubuntu)
 
 on:
   push:
@@ -13,44 +13,52 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Install Debian live-build tools
+      - name: Free Disk Space
+        run: |
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /opt/ghc
+          sudo rm -rf "/usr/local/share/boost"
+          sudo rm -rf "$AGENT_TOOLSDIRECTORY"
+
+      - name: Install Build Tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y live-build debootstrap xorriso squashfs-tools debian-archive-keyring
+          sudo apt-get install -y live-build debootstrap xorriso squashfs-tools ubuntu-keyring
 
-      - name: Configure Debian Live ISO
+      - name: Configure Ubuntu Live ISO
         run: |
-          mkdir -p debian-live
-          cd debian-live
+          mkdir -p ubuntu-live
+          cd ubuntu-live
           
-          # Явно задаем зеркала Debian и ключи проверки
+          # Настраиваем сборку на базе Ubuntu Noble (24.04 LTS)
           lb config \
-            --distribution bookworm \
-            --debian-installer live \
-            --archive-areas "main contrib non-free non-free-firmware" \
-            --mirror-bootstrap "http://deb.debian.org/debian/" \
-            --mirror-chroot "http://deb.debian.org/debian/" \
-            --mirror-binary "http://deb.debian.org/debian/" \
-            --keyring-packages debian-archive-keyring \
-            --architectures amd64
-          
-          # Прописываем графическую среду KDE Plasma и необходимые утилиты
+            --distribution noble \
+            --architectures amd64 \
+            --archive-areas "main restricted universe multiverse" \
+            --mirror-bootstrap "http://archive.ubuntu.com/ubuntu/" \
+            --mirror-chroot "http://archive.ubuntu.com/ubuntu/" \
+            --mirror-binary "http://archive.ubuntu.com/ubuntu/" \
+            --security true
+
+          # Добавляем KDE Plasma и базовый софт
           mkdir -p config/package-lists
           cat << 'EOF' > config/package-lists/desktop.list.chroot
-          task-kde-desktop
-          plasma-desktop
+          kubuntu-desktop
           sddm
           network-manager
+          calamares
+          firefox
+          vlc
           sudo
           EOF
 
       - name: Build ISO
         run: |
-          cd debian-live
+          cd ubuntu-live
           sudo lb build
 
       - name: Upload CarBerry OS ISO
         uses: actions/upload-artifact@v4
         with:
-          name: CarBerry-OS-Debian-ISO
-          path: debian-live/*.iso
+          name: CarBerry-OS-Ubuntu-ISO
+          path: ubuntu-live/*.iso
