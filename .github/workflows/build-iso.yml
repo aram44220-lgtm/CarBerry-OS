@@ -1,4 +1,4 @@
-name: Build CarBerry OS (Ubuntu)
+name: Build CarBerry OS (Debian)
 
 on:
   push:
@@ -26,15 +26,18 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y live-build debootstrap syslinux-utils isolinux xorriso squashfs-tools grub-pc-bin grub-efi-amd64-bin
 
-      - name: Configure Ubuntu Live ISO
+      - name: Configure Debian Live ISO
         run: |
           mkdir -p debian-live
           cd debian-live
           lb config \
             --debian-installer live \
             --archive-areas "main contrib non-free non-free-firmware" \
-            --desktop kde \
             --architectures amd64
+          
+          # Задаем KDE Plasma и базовый софт через список пакетов
+          mkdir -p config/package-lists
+          echo "task-kde-desktop calamares firefox-esr" > config/package-lists/desktop.list.chroot
 
       - name: Build ISO
         run: |
@@ -44,5 +47,5 @@ jobs:
       - name: Upload CarBerry OS ISO
         uses: actions/upload-artifact@v4
         with:
-          name: CarBerry-OS-Ubuntu-ISO
+          name: CarBerry-OS-Debian-ISO
           path: debian-live/*.iso
