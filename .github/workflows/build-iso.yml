@@ -16,21 +16,24 @@ jobs:
       - name: Free Disk Space
         run: |
           sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /usr/local/lib/android
           sudo rm -rf /opt/ghc
           sudo rm -rf "/usr/local/share/boost"
           sudo rm -rf "$AGENT_TOOLSDIRECTORY"
+          sudo apt-get clean
+          df -h
 
       - name: Install Build Tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y live-build debootstrap xorriso squashfs-tools ubuntu-keyring
+          sudo apt-get install -y live-build debootstrap xorriso squashfs-tools ubuntu-keyring grub-pc-bin grub-efi-amd64-bin
 
       - name: Configure Ubuntu Live ISO
         run: |
           mkdir -p ubuntu-live
           cd ubuntu-live
           
-          # Настраиваем сборку на базе Ubuntu Noble (24.04 LTS)
+          # Конфигурация под самую свежую стабильную Ubuntu 24.04 LTS (Noble Numbat)
           lb config \
             --distribution noble \
             --architectures amd64 \
@@ -38,11 +41,16 @@ jobs:
             --mirror-bootstrap "http://archive.ubuntu.com/ubuntu/" \
             --mirror-chroot "http://archive.ubuntu.com/ubuntu/" \
             --mirror-binary "http://archive.ubuntu.com/ubuntu/" \
+            --bootloader grub2 \
+            --debian-installer false \
+            --memtest none \
             --security true
 
-          # Добавляем KDE Plasma и базовый софт
+          # Обязательные компоненты ядра, загрузки и интерфейса
           mkdir -p config/package-lists
           cat << 'EOF' > config/package-lists/desktop.list.chroot
+          casper
+          linux-image-generic
           kubuntu-desktop
           sddm
           network-manager
