@@ -18,52 +18,31 @@ jobs:
           sudo rm -rf /usr/share/dotnet
           sudo rm -rf /usr/local/lib/android
           sudo rm -rf /opt/ghc
-          sudo rm -rf "/usr/local/share/boost"
-          sudo rm -rf "$AGENT_TOOLSDIRECTORY"
+          sudo rm -rf /usr/local/share/boost
           sudo apt-get clean
 
       - name: Install Build Tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y live-build debootstrap xorriso squashfs-tools ubuntu-keyring grub-pc-bin grub-efi-amd64-bin syslinux-utils isolinux
+          sudo apt-get install -y live-build debootstrap syslinux-utils isolinux xorriso squashfs-tools grub-pc-bin grub-efi-amd64-bin
 
       - name: Configure Ubuntu Live ISO
         run: |
-          mkdir -p ubuntu-live
-          cd ubuntu-live
-          
+          mkdir -p debian-live
+          cd debian-live
           lb config \
-            --distribution noble \
-            --architectures amd64 \
-            --archive-areas "main restricted universe multiverse" \
-            --mirror-bootstrap "http://archive.ubuntu.com/ubuntu/" \
-            --mirror-chroot "http://archive.ubuntu.com/ubuntu/" \
-            --mirror-binary "http://archive.ubuntu.com/ubuntu/" \
-            --bootloader grub2 \
-            --debian-installer false \
-            --memtest none \
-            --security true
-
-          mkdir -p config/package-lists
-          cat << 'EOF' > config/package-lists/desktop.list.chroot
-          casper
-          linux-image-generic
-          kubuntu-desktop
-          sddm
-          network-manager
-          calamares
-          firefox
-          vlc
-          sudo
-          EOF
+            --debian-installer live \
+            --archive-areas "main contrib non-free non-free-firmware" \
+            --desktop kde \
+            --architectures amd64
 
       - name: Build ISO
         run: |
-          cd ubuntu-live
+          cd debian-live
           sudo lb build
 
       - name: Upload CarBerry OS ISO
         uses: actions/upload-artifact@v4
         with:
           name: CarBerry-OS-Ubuntu-ISO
-          path: ubuntu-live/*.iso
+          path: debian-live/*.iso
