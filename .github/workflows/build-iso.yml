@@ -21,19 +21,17 @@ jobs:
           sudo rm -rf "/usr/local/share/boost"
           sudo rm -rf "$AGENT_TOOLSDIRECTORY"
           sudo apt-get clean
-          df -h
 
       - name: Install Build Tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y live-build debootstrap xorriso squashfs-tools ubuntu-keyring grub-pc-bin grub-efi-amd64-bin
+          sudo apt-get install -y live-build debootstrap xorriso squashfs-tools ubuntu-keyring grub-pc-bin grub-efi-amd64-bin syslinux-utils isolinux
 
       - name: Configure Ubuntu Live ISO
         run: |
           mkdir -p ubuntu-live
           cd ubuntu-live
           
-          # Конфигурация под самую свежую стабильную Ubuntu 24.04 LTS (Noble Numbat)
           lb config \
             --distribution noble \
             --architectures amd64 \
@@ -46,7 +44,6 @@ jobs:
             --memtest none \
             --security true
 
-          # Обязательные компоненты ядра, загрузки и интерфейса
           mkdir -p config/package-lists
           cat << 'EOF' > config/package-lists/desktop.list.chroot
           casper
