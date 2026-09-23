@@ -1,54 +1,338 @@
-name: Build CarBerry OS (Debian)
+name: Build CarBerry OS Live ISO
 
 on:
   push:
-    branches: [ "main" ]
-  workflow_dispatch:
+    branches: [ main, develop ]
+    paths:
+      - '.github/workflows/build-iso.yml'
+      - 'iso-config/**'
+  workflow_dispatch:  # Ручной запуск
+
+concurrency:
+  group: iso-build-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  build:
+  build-iso:
     runs-on: ubuntu-latest
-
+    timeout-minutes: 120
+    
     steps:
+      # ===== ШАmedallion 1: Освобождение дискового пространства =====
+      - name: Free Disk Space (Ubuntu)
+        uses: jlumbroso/free-disk-space@main
+        with:
+          tool-cache: true
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          swap-storage: false  # swap может помешать live-build
+      
+      - name: Verify free disk space
+        run: |
+          df -h /
+          free -h
+
+      # ===== ШАГ 2: Checkout кода проекта =====
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
 
-      - name: Free Disk Space
-        run: |
-          sudo rm -rf /usr/share/dotnet
-          sudo rm -rf /usr/local/lib/android
-          sudo rm -rf /opt/ghc
-          sudo rm -rf /usr/local/share/boost
-          sudo apt-get clean
-
-      - name: Install Build Tools
+      # ===== ШАГ 3: Установка зависимостей live-build =====
+      - name: Update APT and install live-build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y live-build debootstrap syslinux-utils isolinux xorriso squashfs-tools grub-pc-bin grub-efi-amd64-bin
+          sudo apt-get install -y \
+            live-build \
+            debootstrap \
+            syslinux-utils \
+            isolinux \
+            xorriso \
+            squashfs-tools \
+            grub-pc-bin \
+            grub-efi-amd64-bin \
+            dosfstools \
+            mtools \
+            parted
 
-      - name: Configure Debian Live ISO
+      # ===== ШАГ 4: Проверка версии live-build =====
+      - name: Check live-build version
         run: |
-          mkdir -p debian-live
-          cd debian-live
+          lb --version
+          debootstrap --version
+
+      # ===== ШАГ 5: Подготовка конфигурации live-build =====
+      - name: Prepare live-build configuration
+        run: |
+          # Создаём директорию проекта
+          mkdir -p carberry-iso
+          cd carberry-iso
+          
+          # Инициализируем новый live-build проект
           lb config \
             --mode debian \
             --distribution bookworm \
-            --architectures amd64 \
-            --archive-areas "main contrib non-free non-free-firmware" \
+            --architecture amd64 \
+            --binary-images iso-hybrid \
             --mirror-bootstrap "http://deb.debian.org/debian/" \
             --mirror-chroot "http://deb.debian.org/debian/" \
-            --debian-installer live
+            --mirror-binary "http://deb.debian.org/debian/" \
+            --mirror-binary-security "http://security.debian.org/debian-security/" \
+            --debootstrap-options "--variant=minbase" \
+            --apt-recommends false \
+            --bootappend-live "boot=live components locales=en_US.UTF-8 keyboard-layouts=us" \
+            --iso-volume "CarBerry OS" \
+            --iso-publisher "CarBerry Project" \
+            --image-name "carberry-os-bookworm"
           
+          # Создаём директорию для списков пакетов
           mkdir -p config/package-lists
-          echo "task-kde-desktop calamares firefox-esr" > config/package-lists/desktop.list.chroot
+          
+          # Базовая система
+          cat > config/package-lists/system.list.chroot << 'EOF'
+# Базовые утилиты
+sudo
+curl
+wget
+git
+nano
+vim
+htop
+neofetch
 
-      - name: Build ISO
+# Локализация и шрифты
+locales
+fonts-liberation
+fonts-dejavu
+ttf-dejavu
+keyboard-configuration
+console-cyrillic
+
+# Сетевые утилиты
+openssh-client
+dnsutils
+iputils-ping
+traceroute
+EOF
+
+          # KDE Plasma и графический стол
+          cat > config/package-lists/kde.list.chroot << 'EOF'
+# KDE Plasma Desktop
+task-kde-desktop
+kde-plasma-desktop
+kde-standard
+kde-full
+
+# KDE приложения
+konsole
+dolphin
+kwrite
+kcalc
+okular
+vlc
+
+# Звук и мультимедиа
+pulseaudio
+pavucontrol
+alsa-utils
+EOF
+
+          # Установщик и браузер
+          cat > config/package-lists/apps.list.chroot << 'EOF'
+# Installer
+calamares
+calamares-settings-debian
+
+# Браузер
+firefox-esr
+firefox-l10n-en-us
+
+# Дополнительные утилиты
+gparted
+disk-manager
+kate
+xdg-user-dirs
+EOF
+
+          # Загрузчик (bootloader)
+          cat > config/package-lists/bootloader.list.chroot << 'EOF'
+# GRUB и boot utilities
+grub-pc
+grub-efi-amd64
+grub-efi-ia32
+isolinux
+syslinux-utils
+syslinux
+EOF
+
+          # Драйверы и поддержка оборудования
+          cat > config/package-lists/hardware.list.chroot << 'EOF'
+# Firmware
+firmware-linux
+firmware-linux-nonfree
+wireless-tools
+wpasupplicant
+network-manager
+network-manager-gnome
+
+# Видео- и аудиодрайверы
+xserver-xorg-video-nouveau
+xserver-xorg-video-intel
+xserver-xorg-video-amd
+xserver-xorg-input-libinput
+EOF
+
+          # Исключаем ненужные пакеты для экономии места
+          mkdir -p config/package-lists
+          cat > config/package-lists/exclude.list.chroot << 'EOF'
+# Исключаем документацию и примеры для экономии места
+# Эти исключения не обязательны, но помогают сжать ISO
+EOF
+
+          # Создаём hook для почтисборки (опционально)
+          mkdir -p config/hooks/live
+          cat > config/hooks/live/0100-timezone.chroot << 'EOF'
+#!/bin/bash
+set -e
+
+# Установка часового пояса на UTC
+ln -sf /usr/share/zoneinfo/UTC /etc/localtime
+
+# Генерация locales (русский + английский)
+echo "en_US.UTF-8 UTF-8" >> /etc/locale.gen
+echo "ru_RU.UTF-8 UTF-8" >> /etc/locale.gen
+locale-gen
+EOF
+          chmod +x config/hooks/live/0100-timezone.chroot
+
+      # ===== ШАГ 6: Дополнительные настройки для сборки =====
+      - name: Configure build environment
+        working-directory: carberry-iso
         run: |
-          cd debian-live
-          sudo lb build
+          # Убеждаемся, что используется правильный kernel
+          mkdir -p config/package-lists
+          
+          # Добавляем ядро Linux (обычно устанавливается автоматически, но явно указываем)
+          cat > config/package-lists/kernel.list.chroot << 'EOF'
+linux-image-amd64
+linux-headers-amd64
+EOF
 
-      - name: Upload CarBerry OS ISO
+          # Проверяем конфигурацию
+          echo "=== Checking configuration ==="
+          ls -la config/package-lists/
+          echo "=== Configuration created ==="
+
+      # ===== ШАГИ 7: Сборка Live ISO =====
+      - name: Build Live ISO
+        working-directory: carberry-iso
+        run: |
+          echo "Starting live-build process..."
+          echo "Disk space before build:"
+          df -h /
+          
+          # Запускаем сборку с verbose выводом
+          sudo -E lb build 2>&1 | tee build.log
+          
+          echo "Disk space after build:"
+          df -h /
+
+      # ===== ШАГИ 8: Проверка результата =====
+      - name: Verify ISO creation
+        working-directory: carberry-iso
+        run: |
+          echo "=== Looking for ISO files ==="
+          find . -name "*.iso" -ls 2>/dev/null || echo "No ISO found yet"
+          
+          echo "=== Checking build directory structure ==="
+          ls -lah
+          
+          echo "=== Checking binary directory ==="
+          if [ -d "binary" ]; then
+            ls -lah binary/
+          fi
+
+      # ===== ШАГИ 9: Пост-обработка ISO (isohybrid) =====
+      - name: Make ISO hybrid-bootable (if not already)
+        working-directory: carberry-iso
+        run: |
+          # Находим созданный ISO
+          ISO_FILE=$(find . -name "*.iso" -type f 2>/dev/null | head -1)
+          
+          if [ -z "$ISO_FILE" ]; then
+            echo "ERROR: ISO file not found!"
+            ls -lah
+            tail -100 build.log
+            exit 1
+          fi
+          
+          echo "Found ISO: $ISO_FILE"
+          ISO_SIZE=$(ls -lh "$ISO_FILE" | awk '{print $5}')
+          echo "ISO size: $ISO_SIZE"
+          
+          # Проверяем валидность ISO
+          file "$ISO_FILE"
+          
+          # Применяем isohybrid если нужно (современные live-build уже делает это)
+          if ! isohybrid "$ISO_FILE" 2>&1 | grep -q "already"; then
+            echo "Applying isohybrid..."
+            sudo isohybrid "$ISO_FILE" || echo "isohybrid already applied or not needed"
+          else
+            echo "ISO already hybrid-bootable"
+          fi
+
+      # ===== ШАГИ 10: Подготовка артефактов =====
+      - name: Prepare artifacts
+        working-directory: carberry-iso
+        run: |
+          # Создаём директорию для артефактов
+          mkdir -p ../artifacts
+          
+          # Копируем ISO
+          ISO_FILE=$(find . -name "*.iso" -type f 2>/dev/null | head -1)
+          if [ -n "$ISO_FILE" ]; then
+            cp "$ISO_FILE" ../artifacts/
+            ls -lh ../artifacts/
+          else
+            echo "ERROR: ISO file not found!"
+            exit 1
+          fi
+
+      # ===== ШАГИ 11: Загрузка артефактов в GitHub =====
+      - name: Upload ISO artifact
         uses: actions/upload-artifact@v4
         with:
-          name: CarBerry-OS-Debian-ISO
-          path: debian-live/*.iso
+          name: carberry-os-iso
+          path: artifacts/*.iso
+          retention-days: 30
+          if-no-files-found: error
+
+      # ===== ШАГИ 12: Создание Release (опционально) =====
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v1
+        with:
+          files: artifacts/*.iso
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # ===== ШАГИ 13: Логирование и диагностика =====
+      - name: Cleanup and final report
+        if: always()
+        working-directory: carberry-iso
+        run: |
+          echo "=== Build Summary ==="
+          echo "Final disk usage:"
+          df -h /
+          
+          if [ -f build.log ]; then
+            echo "=== Last 50 lines of build.log ==="
+            tail -50 build.log
+          fi
+          
+          echo "=== Final artifacts ==="
+          ls -lh ../artifacts/ || echo "No artifacts found"
