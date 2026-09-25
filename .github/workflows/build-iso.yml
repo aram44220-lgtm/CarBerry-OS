@@ -16,11 +16,11 @@ jobs:
   build-iso:
     runs-on: ubuntu-latest
     timeout-minutes: 120
-    
+
     steps:
-      # ===== ШАmedallion 1: Освобождение дискового пространства =====
+      # ===== ШАГ 1: Освобождение дискового пространства =====
       - name: Free Disk Space (Ubuntu)
-        uses: jlumbroso/free-disk-space@main
+        uses: jlumbroso/free-disk-space@v1.3.1
         with:
           tool-cache: true
           android: true
@@ -28,7 +28,7 @@ jobs:
           haskell: true
           large-packages: true
           swap-storage: false  # swap может помешать live-build
-      
+
       - name: Verify free disk space
         run: |
           df -h /
@@ -55,7 +55,8 @@ jobs:
             grub-efi-amd64-bin \
             dosfstools \
             mtools \
-            parted
+            parted \
+            file
 
       # ===== ШАГ 4: Проверка версии live-build =====
       - name: Check live-build version
@@ -69,7 +70,7 @@ jobs:
           # Создаём директорию проекта
           mkdir -p carberry-iso
           cd carberry-iso
-          
+
           # Инициализируем новый live-build проект
           lb config \
             --mode debian \
@@ -86,10 +87,10 @@ jobs:
             --iso-volume "CarBerry OS" \
             --iso-publisher "CarBerry Project" \
             --image-name "carberry-os-bookworm"
-          
+
           # Создаём директорию для списков пакетов
           mkdir -p config/package-lists
-          
+
           # Базовая система
           cat > config/package-lists/system.list.chroot << 'EOF'
 # Базовые утилиты
@@ -185,13 +186,12 @@ xserver-xorg-input-libinput
 EOF
 
           # Исключаем ненужные пакеты для экономии места
-          mkdir -p config/package-lists
           cat > config/package-lists/exclude.list.chroot << 'EOF'
 # Исключаем документацию и примеры для экономии места
 # Эти исключения не обязательны, но помогают сжать ISO
 EOF
 
-          # Создаём hook для почтисборки (опционально)
+          # Создаём hook для постсборки (опционально)
           mkdir -p config/hooks/live
           cat > config/hooks/live/0100-timezone.chroot << 'EOF'
 #!/bin/bash
@@ -213,7 +213,7 @@ EOF
         run: |
           # Убеждаемся, что используется правильный kernel
           mkdir -p config/package-lists
-          
+
           # Добавляем ядро Linux (обычно устанавливается автоматически, но явно указываем)
           cat > config/package-lists/kernel.list.chroot << 'EOF'
 linux-image-amd64
@@ -225,56 +225,56 @@ EOF
           ls -la config/package-lists/
           echo "=== Configuration created ==="
 
-      # ===== ШАГИ 7: Сборка Live ISO =====
+      # ===== ШАГ 7: Сборка Live ISO =====
       - name: Build Live ISO
         working-directory: carberry-iso
         run: |
           echo "Starting live-build process..."
           echo "Disk space before build:"
           df -h /
-          
+
           # Запускаем сборку с verbose выводом
           sudo -E lb build 2>&1 | tee build.log
-          
+
           echo "Disk space after build:"
           df -h /
 
-      # ===== ШАГИ 8: Проверка результата =====
+      # ===== ШАГ 8: Проверка результата =====
       - name: Verify ISO creation
         working-directory: carberry-iso
         run: |
           echo "=== Looking for ISO files ==="
           find . -name "*.iso" -ls 2>/dev/null || echo "No ISO found yet"
-          
+
           echo "=== Checking build directory structure ==="
           ls -lah
-          
+
           echo "=== Checking binary directory ==="
           if [ -d "binary" ]; then
             ls -lah binary/
           fi
 
-      # ===== ШАГИ 9: Пост-обработка ISO (isohybrid) =====
+      # ===== ШАГ 9: Пост-обработка ISO (isohybrid) =====
       - name: Make ISO hybrid-bootable (if not already)
         working-directory: carberry-iso
         run: |
           # Находим созданный ISO
           ISO_FILE=$(find . -name "*.iso" -type f 2>/dev/null | head -1)
-          
+
           if [ -z "$ISO_FILE" ]; then
             echo "ERROR: ISO file not found!"
             ls -lah
             tail -100 build.log
             exit 1
           fi
-          
+
           echo "Found ISO: $ISO_FILE"
           ISO_SIZE=$(ls -lh "$ISO_FILE" | awk '{print $5}')
           echo "ISO size: $ISO_SIZE"
-          
+
           # Проверяем валидность ISO
           file "$ISO_FILE"
-          
+
           # Применяем isohybrid если нужно (современные live-build уже делает это)
           if ! isohybrid "$ISO_FILE" 2>&1 | grep -q "already"; then
             echo "Applying isohybrid..."
@@ -283,13 +283,13 @@ EOF
             echo "ISO already hybrid-bootable"
           fi
 
-      # ===== ШАГИ 10: Подготовка артефактов =====
+      # ===== ШАГ 10: Подготовка артефактов =====
       - name: Prepare artifacts
         working-directory: carberry-iso
         run: |
           # Создаём директорию для артефактов
           mkdir -p ../artifacts
-          
+
           # Копируем ISO
           ISO_FILE=$(find . -name "*.iso" -type f 2>/dev/null | head -1)
           if [ -n "$ISO_FILE" ]; then
@@ -300,7 +300,7 @@ EOF
             exit 1
           fi
 
-      # ===== ШАГИ 11: Загрузка артефактов в GitHub =====
+      # ===== ШАГ 11: Загрузка артефактов в GitHub =====
       - name: Upload ISO artifact
         uses: actions/upload-artifact@v4
         with:
@@ -309,7 +309,7 @@ EOF
           retention-days: 30
           if-no-files-found: error
 
-      # ===== ШАГИ 12: Создание Release (опционально) =====
+      # ===== ШАГ 12: Создание Release (опционально) =====
       - name: Create GitHub Release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v1
@@ -320,7 +320,7 @@ EOF
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # ===== ШАГИ 13: Логирование и диагностика =====
+      # ===== ШАГ 13: Логирование и диагностика =====
       - name: Cleanup and final report
         if: always()
         working-directory: carberry-iso
@@ -328,11 +328,11 @@ EOF
           echo "=== Build Summary ==="
           echo "Final disk usage:"
           df -h /
-          
+
           if [ -f build.log ]; then
             echo "=== Last 50 lines of build.log ==="
             tail -50 build.log
           fi
-          
+
           echo "=== Final artifacts ==="
           ls -lh ../artifacts/ || echo "No artifacts found"
