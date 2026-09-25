@@ -6,7 +6,7 @@ on:
     paths:
       - '.github/workflows/build-iso.yml'
       - 'iso-config/**'
-  workflow_dispatch:  # Ручной запуск
+  workflow_dispatch:
 
 concurrency:
   group: iso-build-${{ github.ref }}
@@ -15,10 +15,9 @@ concurrency:
 jobs:
   build-iso:
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 180
 
     steps:
-      # ===== ШАГ 1: Освобождение дискового пространства =====
       - name: Free Disk Space (Ubuntu)
         uses: jlumbroso/free-disk-space@v1.3.1
         with:
@@ -27,24 +26,25 @@ jobs:
           dotnet: true
           haskell: true
           large-packages: true
-          swap-storage: false  # swap может помешать live-build
+          swap-storage: false
 
       - name: Verify free disk space
+        shell: bash
         run: |
           df -h /
           free -h
 
-      # ===== ШАГ 2: Checkout кода проекта =====
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 1
 
-      # ===== ШАГ 3: Установка зависимостей live-build =====
       - name: Update APT and install live-build dependencies
+        shell: bash
         run: |
+          set -euo pipefail
           sudo apt-get update
-          sudo apt-get install -y \
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
             live-build \
             debootstrap \
             syslinux-utils \
@@ -56,43 +56,44 @@ jobs:
             dosfstools \
             mtools \
             parted \
-            file
+            file \
+            wget \
+            ca-certificates
 
-      # ===== ШАГ 4: Проверка версии live-build =====
       - name: Check live-build version
+        shell: bash
         run: |
           lb --version
           debootstrap --version
 
-      # ===== ШАГ 5: Подготовка конфигурации live-build =====
       - name: Prepare live-build configuration
+        shell: bash
         run: |
-          # Создаём директорию проекта
+          set -euo pipefail
+
           mkdir -p carberry-iso
           cd carberry-iso
 
-          # Инициализируем новый live-build проект
           lb config \
             --mode debian \
             --distribution bookworm \
             --architecture amd64 \
             --binary-images iso-hybrid \
+            --archive-areas "main contrib non-free non-free-firmware" \
             --mirror-bootstrap "http://deb.debian.org/debian/" \
             --mirror-chroot "http://deb.debian.org/debian/" \
             --mirror-binary "http://deb.debian.org/debian/" \
-            --mirror-binary-security "http://security.debian.org/debian-security/" \
-            --debootstrap-options "--variant=minbase" \
+            --mirror-binary-security "http://deb.debian.org/debian-security/" \
+            --debootstrap-options "--variant=minbase --arch=amd64" \
             --apt-recommends false \
             --bootappend-live "boot=live components locales=en_US.UTF-8 keyboard-layouts=us" \
             --iso-volume "CarBerry OS" \
             --iso-publisher "CarBerry Project" \
             --image-name "carberry-os-bookworm"
 
-          # Создаём директорию для списков пакетов
           mkdir -p config/package-lists
 
-          # Базовая система
-          cat > config/package-lists/system.list.chroot << 'EOF'
+          cat > config/package-lists/system.list.chroot <<'EOF'
 # Базовые утилиты
 sudo
 curl
@@ -118,15 +119,9 @@ iputils-ping
 traceroute
 EOF
 
-          # KDE Plasma и графический стол
-          cat > config/package-lists/kde.list.chroot << 'EOF'
+          cat > config/package-lists/kde.list.chroot <<'EOF'
 # KDE Plasma Desktop
-task-kde-desktop
 kde-plasma-desktop
-kde-standard
-kde-full
-
-# KDE приложения
 konsole
 dolphin
 kwrite
@@ -140,25 +135,22 @@ pavucontrol
 alsa-utils
 EOF
 
-          # Установщик и браузер
-          cat > config/package-lists/apps.list.chroot << 'EOF'
+          cat > config/package-lists/apps.list.chroot <<'EOF'
 # Installer
 calamares
 calamares-settings-debian
 
 # Браузер
 firefox-esr
-firefox-l10n-en-us
+firefox-esr-l10n-en-us
 
 # Дополнительные утилиты
 gparted
-disk-manager
 kate
 xdg-user-dirs
 EOF
 
-          # Загрузчик (bootloader)
-          cat > config/package-lists/bootloader.list.chroot << 'EOF'
+          cat > config/package-lists/bootloader.list.chroot <<'EOF'
 # GRUB и boot utilities
 grub-pc
 grub-efi-amd64
@@ -168,8 +160,7 @@ syslinux-utils
 syslinux
 EOF
 
-          # Драйверы и поддержка оборудования
-          cat > config/package-lists/hardware.list.chroot << 'EOF'
+          cat > config/package-lists/hardware.list.chroot <<'EOF'
 # Firmware
 firmware-linux
 firmware-linux-nonfree
@@ -178,71 +169,55 @@ wpasupplicant
 network-manager
 network-manager-gnome
 
-# Видео- и аудиодрайверы
+# Видео- и аудиодрайверры
 xserver-xorg-video-nouveau
 xserver-xorg-video-intel
 xserver-xorg-video-amd
 xserver-xorg-input-libinput
 EOF
 
-          # Исключаем ненужные пакеты для экономии места
-          cat > config/package-lists/exclude.list.chroot << 'EOF'
-# Исключаем документацию и примеры для экономии места
-# Эти исключения не обязательны, но помогают сжать ISO
+          cat > config/package-lists/kernel.list.chroot <<'EOF'
+linux-image-amd64
 EOF
 
-          # Создаём hook для постсборки (опционально)
           mkdir -p config/hooks/live
-          cat > config/hooks/live/0100-timezone.chroot << 'EOF'
+          cat > config/hooks/live/0100-timezone.chroot <<'EOF'
 #!/bin/bash
 set -e
 
-# Установка часового пояса на UTC
 ln -sf /usr/share/zoneinfo/UTC /etc/localtime
 
-# Генерация locales (русский + английский)
 echo "en_US.UTF-8 UTF-8" >> /etc/locale.gen
 echo "ru_RU.UTF-8 UTF-8" >> /etc/locale.gen
 locale-gen
 EOF
           chmod +x config/hooks/live/0100-timezone.chroot
 
-      # ===== ШАГ 6: Дополнительные настройки для сборки =====
-      - name: Configure build environment
-        working-directory: carberry-iso
-        run: |
-          # Убеждаемся, что используется правильный kernel
-          mkdir -p config/package-lists
-
-          # Добавляем ядро Linux (обычно устанавливается автоматически, но явно указываем)
-          cat > config/package-lists/kernel.list.chroot << 'EOF'
-linux-image-amd64
-linux-headers-amd64
-EOF
-
-          # Проверяем конфигурацию
           echo "=== Checking configuration ==="
           ls -la config/package-lists/
           echo "=== Configuration created ==="
 
-      # ===== ШАГ 7: Сборка Live ISO =====
       - name: Build Live ISO
         working-directory: carberry-iso
+        shell: bash
         run: |
+          set -euo pipefail
+
           echo "Starting live-build process..."
           echo "Disk space before build:"
           df -h /
 
-          # Запускаем сборку с verbose выводом
           sudo -E lb build 2>&1 | tee build.log
 
           echo "Disk space after build:"
           df -h /
 
-      # ===== ШАГ 8: Проверка результата =====
       - name: Verify ISO creation
         working-directory: carberry-iso
+        shell: bash
         run: |
+          set -euo pipefail
+
           echo "=== Looking for ISO files ==="
           find . -name "*.iso" -ls 2>/dev/null || echo "No ISO found yet"
 
@@ -254,53 +229,42 @@ EOF
             ls -lah binary/
           fi
 
-      # ===== ШАГ 9: Пост-обработка ISO (isohybrid) =====
-      - name: Make ISO hybrid-bootable (if not already)
+      - name: Validate built ISO
         working-directory: carberry-iso
+        shell: bash
         run: |
-          # Находим созданный ISO
-          ISO_FILE=$(find . -name "*.iso" -type f 2>/dev/null | head -1)
+          set -euo pipefail
+
+          ISO_FILE=$(find . -type f -name "*.iso" -print -quit)
 
           if [ -z "$ISO_FILE" ]; then
             echo "ERROR: ISO file not found!"
             ls -lah
-            tail -100 build.log
+            tail -100 build.log || true
             exit 1
           fi
 
           echo "Found ISO: $ISO_FILE"
-          ISO_SIZE=$(ls -lh "$ISO_FILE" | awk '{print $5}')
-          echo "ISO size: $ISO_SIZE"
-
-          # Проверяем валидность ISO
           file "$ISO_FILE"
+          isoinfo -d -i "$ISO_FILE" | head -20 || true
 
-          # Применяем isohybrid если нужно (современные live-build уже делает это)
-          if ! isohybrid "$ISO_FILE" 2>&1 | grep -q "already"; then
-            echo "Applying isohybrid..."
-            sudo isohybrid "$ISO_FILE" || echo "isohybrid already applied or not needed"
-          else
-            echo "ISO already hybrid-bootable"
-          fi
-
-      # ===== ШАГ 10: Подготовка артефактов =====
       - name: Prepare artifacts
         working-directory: carberry-iso
+        shell: bash
         run: |
-          # Создаём директорию для артефактов
-          mkdir -p ../artifacts
+          set -euo pipefail
 
-          # Копируем ISO
-          ISO_FILE=$(find . -name "*.iso" -type f 2>/dev/null | head -1)
-          if [ -n "$ISO_FILE" ]; then
-            cp "$ISO_FILE" ../artifacts/
-            ls -lh ../artifacts/
-          else
+          mkdir -p ../artifacts
+          ISO_FILE=$(find . -type f -name "*.iso" -print -quit)
+
+          if [ -z "$ISO_FILE" ]; then
             echo "ERROR: ISO file not found!"
             exit 1
           fi
 
-      # ===== ШАГ 11: Загрузка артефактов в GitHub =====
+          cp "$ISO_FILE" ../artifacts/
+          ls -lh ../artifacts/
+
       - name: Upload ISO artifact
         uses: actions/upload-artifact@v4
         with:
@@ -309,7 +273,6 @@ EOF
           retention-days: 30
           if-no-files-found: error
 
-      # ===== ШАГ 12: Создание Release (опционально) =====
       - name: Create GitHub Release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v1
@@ -320,10 +283,10 @@ EOF
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # ===== ШАГ 13: Логирование и диагностика =====
       - name: Cleanup and final report
         if: always()
         working-directory: carberry-iso
+        shell: bash
         run: |
           echo "=== Build Summary ==="
           echo "Final disk usage:"
