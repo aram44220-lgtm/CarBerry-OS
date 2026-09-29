@@ -13,6 +13,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 180
 
+    env:
+      DEBIAN_FRONTEND: noninteractive
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -22,15 +25,17 @@ jobs:
         run: |
           set -euxo pipefail
           sudo apt-get update
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+          sudo apt-get install -y --no-install-recommends \
             live-build debootstrap xorriso squashfs-tools \
             grub-pc-bin grub-efi-amd64-bin syslinux-utils isolinux \
-            dosfstools mtools parted file wget ca-certificates
+            dosfstools mtools parted file wget ca-certificates \
+            curl git locales
 
       - name: Create live-build config
         shell: bash
         run: |
           set -euxo pipefail
+
           mkdir -p carberry-iso
           cd carberry-iso
 
@@ -47,10 +52,10 @@ jobs:
             --apt-recommends false \
             --bootappend-live "boot=live components locales=en_US.UTF-8 keyboard-layouts=us" \
             --iso-volume "CarBerry OS" \
-            --iso-publisher "CarBerry Project" \
-            --image-name "carberry-os-bookworm"
+            --iso-publisher "CarBerry Project"
 
           mkdir -p config/package-lists
+
           cat > config/package-lists/base.list.chroot <<'EOF'
           linux-image-amd64
           sudo
@@ -85,9 +90,19 @@ jobs:
           set -euxo pipefail
           sudo -E lb build 2>&1 | tee build.log
 
-      - name: Check result
+      - name: Verify ISO was produced
         working-directory: carberry-iso
         shell: bash
         run: |
           set -euxo pipefail
-          find . -name "*.iso" -ls
+          ls -lh ./*.iso || {
+            echo "ISO not found!"
+            exit 1
+          }
+
+      - name: Upload ISO artifact
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: carberry-os-live-iso
+          path: carberry-iso/*.iso
